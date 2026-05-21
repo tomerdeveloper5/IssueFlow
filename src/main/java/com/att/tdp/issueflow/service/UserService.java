@@ -4,6 +4,7 @@ import com.att.tdp.issueflow.api.dto.UserCreateRequest;
 import com.att.tdp.issueflow.api.dto.UserResponse;
 import com.att.tdp.issueflow.api.dto.UserUpdateRequest;
 import com.att.tdp.issueflow.domain.User;
+import com.att.tdp.issueflow.domain.UserRole;
 import com.att.tdp.issueflow.exception.NotFoundException;
 import com.att.tdp.issueflow.repository.UserRepository;
 import java.util.List;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogService auditLogService;
 
     @Transactional(readOnly = true)
     public List<UserResponse> getAll() {
@@ -37,8 +39,7 @@ public class UserService {
         user.setRole(request.role());
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         User saved = userRepository.save(user);
-        // quick debug print
-        System.out.println("Created user: id=" + saved.getId() + ", username=" + saved.getUsername());
+        auditLogService.logUserAction("CREATE", "USER", saved.getId());
         return toResponse(saved);
     }
 
@@ -48,12 +49,14 @@ public class UserService {
         user.setFullName(request.fullName().trim());
         user.setRole(request.role());
         userRepository.save(user);
+        auditLogService.logUserAction("UPDATE", "USER", userId);
     }
 
     @Transactional
     public void delete(Long userId) {
         User user = getEntity(userId);
         userRepository.delete(user);
+        auditLogService.logUserAction("DELETE", "USER", userId);
     }
 
     @Transactional(readOnly = true)
@@ -66,6 +69,11 @@ public class UserService {
     public User getByUsername(String username) {
         return userRepository.findByUsernameIgnoreCase(username)
                 .orElseThrow(() -> new NotFoundException("User not found: " + username));
+    }
+
+    @Transactional(readOnly = true)
+    public List<User> getDevelopersOrderedByRegistration() {
+        return userRepository.findByRoleOrderByCreatedAtAsc(UserRole.DEVELOPER);
     }
 
     private UserResponse toResponse(User user) {

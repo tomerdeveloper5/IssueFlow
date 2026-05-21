@@ -145,6 +145,47 @@ class UserByIdContractIntegrationTest {
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
 
+    @Test
+    void userByIdReflectsUpdateThenReturnsNotFoundAfterDelete() throws Exception {
+        long actorId = registerUserAndReturnId(
+                "user_by_id_chain_actor",
+                "user.by.id.chain.actor@example.com",
+                "Chain Actor",
+                "DEVELOPER"
+        );
+        long userId = registerUserAndReturnId(
+                "user_by_id_chain",
+                "user.by.id.chain@example.com",
+                "Chain User",
+                "DEVELOPER"
+        );
+        String token = loginAndGetToken("user_by_id_chain_actor", "SecurePass1!");
+
+        mockMvc.perform(post("/users/update/{userId}", userId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "fullName", "Chain User Updated",
+                                "role", "ADMIN"
+                        ))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/users/{userId}", userId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fullName").value("Chain User Updated"))
+                .andExpect(jsonPath("$.role").value("ADMIN"));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/users/{userId}", userId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/users/{userId}", userId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        assertTrue(actorId > 0);
+    }
+
     private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

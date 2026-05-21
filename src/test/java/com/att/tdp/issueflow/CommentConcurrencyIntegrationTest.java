@@ -2,6 +2,7 @@ package com.att.tdp.issueflow;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -76,6 +77,51 @@ class CommentConcurrencyIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
+    @Test
+    void mentionLifecycleAcrossCreateUpdateAndUserMentionsFeed() throws Exception {
+        String authorToken = registerAndLogin("devm1", "devm1@example.com", "SecurePass1!");
+        String mentionedToken = registerAndLogin("devm2", "devm2@example.com", "SecurePass1!");
+        Long authorId = extractUserIdFromMe(authorToken);
+        Long mentionedId = extractUserIdFromMe(mentionedToken);
+        Long projectId = createProject(authorToken, authorId);
+        Long ticketId = createTicket(authorToken, projectId, authorId);
+
+        MvcResult createdResult = mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
+                        .header("Authorization", "Bearer " + authorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "authorId", authorId,
+                                "content", "Initial @devm2 mention"
+                        ))))
+                .andExpect(status().isOk())
+                .andReturn();
+        Long commentId = objectMapper.readTree(createdResult.getResponse().getContentAsString()).get("id").asLong();
+
+        MvcResult mentionsBefore = mockMvc.perform(get("/users/{userId}/mentions", mentionedId)
+                        .header("Authorization", "Bearer " + authorToken)
+                        .param("page", "1")
+                        .param("pageSize", "20"))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertTrue(objectMapper.readTree(mentionsBefore.getResponse().getContentAsString()).get("total").asLong() >= 1);
+
+        mockMvc.perform(patch("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
+                        .header("Authorization", "Bearer " + authorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "content", "Mention removed"
+                        ))))
+                .andExpect(status().isOk());
+
+        MvcResult mentionsAfter = mockMvc.perform(get("/users/{userId}/mentions", mentionedId)
+                        .header("Authorization", "Bearer " + authorToken)
+                        .param("page", "1")
+                        .param("pageSize", "20"))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertTrue(objectMapper.readTree(mentionsAfter.getResponse().getContentAsString()).get("total").asLong() == 0);
+    }
+
     private JsonNode createComment(String token, Long ticketId, Long authorId) throws Exception {
         MvcResult result = mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
                         .header("Authorization", "Bearer " + token)
@@ -87,8 +133,9 @@ class CommentConcurrencyIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode created = objectMapper.readTree(result.getResponse().getContentAsString());
-        assertTrue(created.size() == 4);
+        assertTrue(created.size() == 5);
         assertTrue(!created.has("version"));
+        assertTrue(created.has("mentionedUsers"));
         return created;
     }
 

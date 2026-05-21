@@ -284,6 +284,50 @@ class ApiErrorResponseIntegrationTest {
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
 
+    @Test
+    void mixedErrorChainValidationConflictAndAuthInSingleScenario() throws Exception {
+        // 1) validation failure
+        mockMvc.perform(post("/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "x",
+                                "email", "bad",
+                                "fullName", "!",
+                                "role", "DEVELOPER",
+                                "password", "weak"
+                        ))))
+                .andExpect(status().isBadRequest());
+
+        // 2) valid create
+        mockMvc.perform(post("/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "error_chain_user",
+                                "email", "error.chain@example.com",
+                                "fullName", "Error Chain User",
+                                "role", "DEVELOPER",
+                                "password", "SecurePassword1!"
+                        ))))
+                .andExpect(status().isOk());
+
+        // 3) conflict on duplicate username
+        mockMvc.perform(post("/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "error_chain_user",
+                                "email", "error.chain.dup@example.com",
+                                "fullName", "Error Chain User Two",
+                                "role", "DEVELOPER",
+                                "password", "SecurePassword1!"
+                        ))))
+                .andExpect(status().isConflict());
+
+        // 4) auth failure with invalid token
+        mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer not.a.real.token"))
+                .andExpect(status().isUnauthorized());
+    }
+
     private String registerAndLogin(String username, String email, String role) throws Exception {
         mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

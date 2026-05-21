@@ -139,6 +139,43 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
 
+    @Test
+    void reloginAfterLogoutCreatesNewSessionAndAllowsDifferentSessionMeAccess() throws Exception {
+        registerUser("auth_chain_1", "auth_chain_1@example.com", "DEVELOPER");
+        registerUser("auth_chain_2", "auth_chain_2@example.com", "DEVELOPER");
+        String loginBody = objectMapper.writeValueAsString(Map.of(
+                "username", "auth_chain_1",
+                "password", "SecurePass1!"
+        ));
+        MvcResult loginOne = mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody))
+                .andExpect(status().isOk())
+                .andReturn();
+        String tokenOne = objectMapper.readTree(loginOne.getResponse().getContentAsString()).get("accessToken").asText();
+
+        mockMvc.perform(get("/auth/me").header("Authorization", "Bearer " + tokenOne))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/auth/logout").header("Authorization", "Bearer " + tokenOne))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/auth/me").header("Authorization", "Bearer " + tokenOne))
+                .andExpect(status().isUnauthorized());
+
+        MvcResult loginTwo = mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "auth_chain_2",
+                                "password", "SecurePass1!"
+                        ))))
+                .andExpect(status().isOk())
+                .andReturn();
+        String tokenTwo = objectMapper.readTree(loginTwo.getResponse().getContentAsString()).get("accessToken").asText();
+        assertTrue(!tokenTwo.isBlank());
+        mockMvc.perform(get("/auth/me").header("Authorization", "Bearer " + tokenTwo))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("auth_chain_2"));
+    }
+
     private void registerUser(String username, String email, String role) throws Exception {
         MvcResult registerResult = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

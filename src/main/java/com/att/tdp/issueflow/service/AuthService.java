@@ -21,17 +21,20 @@ public class AuthService {
     private final SecurityProperties securityProperties;
     private final TokenDenyListService denyListService;
     private final UserService userService;
+    private final AuditLogService auditLogService;
 
     public AuthTokenResponse login(AuthLoginRequest request) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password())
         );
         String token = jwtService.generateToken(request.username());
+        auditLogService.logUserAction("LOGIN", "AUTH", 0L);
         return new AuthTokenResponse(token, "Bearer", securityProperties.expirationSeconds());
     }
 
     public void logout(String token) {
         denyListService.deny(token, jwtService.extractExpiration(token));
+        auditLogService.logUserAction("LOGOUT", "AUTH", 0L);
     }
 
     public UserResponse me(Authentication authentication) {

@@ -1,8 +1,10 @@
 package com.att.tdp.issueflow.api;
 
 import com.att.tdp.issueflow.api.dto.UserCreateRequest;
+import com.att.tdp.issueflow.api.dto.UserMentionsResponse;
 import com.att.tdp.issueflow.api.dto.UserResponse;
 import com.att.tdp.issueflow.api.dto.UserUpdateRequest;
+import com.att.tdp.issueflow.service.CommentService;
 import com.att.tdp.issueflow.service.UserService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -21,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class UserController {
     private final UserService userService;
+    private final CommentService commentService;
 
     @GetMapping
     public List<UserResponse> getAllUsers() {
@@ -47,6 +51,15 @@ public class UserController {
     public ResponseEntity<Void> deleteUser(@PathVariable Long userId) {
         userService.delete(userId);
         return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{userId}/mentions")
+    public UserMentionsResponse getMentions(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return commentService.getMentionsForUser(userId, page, pageSize);
     }
 }
 

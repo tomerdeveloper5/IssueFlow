@@ -1,6 +1,7 @@
 package com.att.tdp.issueflow.service;
 
 import com.att.tdp.issueflow.api.dto.ProjectCreateRequest;
+import com.att.tdp.issueflow.api.dto.DeletedProjectResponse;
 import com.att.tdp.issueflow.api.dto.ProjectResponse;
 import com.att.tdp.issueflow.api.dto.ProjectUpdateRequest;
 import com.att.tdp.issueflow.domain.Project;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProjectService {
     private final ProjectRepository projectRepository;
     private final UserService userService;
+    private final AuditLogService auditLogService;
 
     @Transactional(readOnly = true)
     public List<ProjectResponse> getAll() {
@@ -34,7 +36,9 @@ public class ProjectService {
         project.setDescription(request.description().trim());
         project.setOwner(userService.getEntity(request.ownerId()));
         project.setDeleted(false);
-        return toResponse(projectRepository.save(project));
+        Project saved = projectRepository.save(project);
+        auditLogService.logUserAction("CREATE", "PROJECT", saved.getId());
+        return toResponse(saved);
     }
 
     @Transactional
@@ -43,6 +47,7 @@ public class ProjectService {
         project.setName(request.name().trim());
         project.setDescription(request.description().trim());
         projectRepository.save(project);
+        auditLogService.logUserAction("UPDATE", "PROJECT", projectId);
     }
 
     @Transactional
@@ -50,6 +55,31 @@ public class ProjectService {
         Project project = getActiveEntity(projectId);
         project.setDeleted(true);
         projectRepository.save(project);
+        auditLogService.logUserAction("DELETE", "PROJECT", projectId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DeletedProjectResponse> getDeleted() {
+        return projectRepository.findByDeletedTrue().stream()
+                .map(project -> new DeletedProjectResponse(
+                        project.getId(),
+                        project.getName(),
+                        project.getDescription(),
+                        project.getOwner().getId()
+                ))
+                .toList();
+    }
+
+    @Transactional
+    public void restore(Long projectId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new NotFoundException("Project not found: " + projectId));
+        if (!project.isDeleted()) {
+            throw new NotFoundException("Project not found: " + projectId);
+        }
+        project.setDeleted(false);
+        projectRepository.save(project);
+        auditLogService.logUserAction("RESTORE", "PROJECT", projectId);
     }
 
     @Transactional(readOnly = true)

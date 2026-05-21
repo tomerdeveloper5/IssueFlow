@@ -118,6 +118,32 @@ class UserListContractIntegrationTest {
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
 
+    @Test
+    void userListReflectsCreateAndRemovesDeletedUserInSameFlow() throws Exception {
+        registerUser("users_chain_actor", "users.chain.actor@example.com", "Users Chain Actor", "DEVELOPER");
+        String token = loginAndGetToken("users_chain_actor", "SecurePass1!");
+        registerUser("users_chain_target", "users.chain.target@example.com", "Users Chain Target", "DEVELOPER");
+
+        MvcResult beforeDeleteResult = mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode beforeDelete = objectMapper.readTree(beforeDeleteResult.getResponse().getContentAsString());
+        JsonNode target = findUserByUsername(beforeDelete, "users_chain_target");
+        assertNotNull(target);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/users/{userId}", target.get("id").asLong())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        MvcResult afterDeleteResult = mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode afterDelete = objectMapper.readTree(afterDeleteResult.getResponse().getContentAsString());
+        assertTrue(findUserByUsername(afterDelete, "users_chain_target") == null);
+    }
+
     private void registerUser(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

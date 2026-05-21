@@ -3,6 +3,7 @@ package com.att.tdp.issueflow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -165,6 +166,35 @@ class ProjectByIdContractIntegrationTest {
                 .andExpect(jsonPath("$.path").value("/projects/" + projectId));
     }
 
+    @Test
+    void projectByIdChainIncludesUpdateTicketAndWorkloadProjection() throws Exception {
+        long ownerId = registerUserAndReturnId(
+                "project_by_id_chain_owner",
+                "project.by.id.chain.owner@example.com",
+                "Project Chain Owner",
+                "DEVELOPER"
+        );
+        String token = loginAndGetToken("project_by_id_chain_owner", "SecurePass1!");
+        long projectId = createProjectAndReturnId(token, ownerId, "Project Chain ById", "Chain by id description");
+        long ticketId = createTicketAndReturnId(token, projectId, ownerId, "Chain ticket");
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(projectId));
+
+        mockMvc.perform(patch("/tickets/{ticketId}", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "IN_PROGRESS"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/{projectId}/workload", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].openTicketCount").isNumber());
+    }
+
     private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -218,6 +248,24 @@ class ProjectByIdContractIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         assertTrue(objectMapper.readTree(result.getResponse().getContentAsString()).size() == 4);
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+    }
+
+    private long createTicketAndReturnId(String token, long projectId, long assigneeId, String title) throws Exception {
+        MvcResult result = mockMvc.perform(post("/tickets")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "title", title,
+                                "description", "ticket for project chain",
+                                "status", "TODO",
+                                "priority", "HIGH",
+                                "type", "BUG",
+                                "projectId", projectId,
+                                "assigneeId", assigneeId
+                        ))))
+                .andExpect(status().isOk())
+                .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
     }
 }

@@ -135,6 +135,42 @@ class ProjectListContractIntegrationTest {
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
 
+    @Test
+    void projectListChainWithDeletedAndRestoreFlow() throws Exception {
+        long ownerId = registerUserAndReturnId(
+                "project_list_chain_owner",
+                "project.list.chain.owner@example.com",
+                "Project Chain Owner",
+                "DEVELOPER"
+        );
+        registerUserAndReturnId(
+                "project_list_chain_admin",
+                "project.list.chain.admin@example.com",
+                "Project Chain Admin",
+                "ADMIN"
+        );
+        String ownerToken = loginAndGetToken("project_list_chain_owner", "SecurePass1!");
+        String adminToken = loginAndGetToken("project_list_chain_admin", "SecurePass1!");
+        long projectId = createProjectAndReturnId(ownerToken, ownerId, "Project Chain", "Project chain description");
+
+        mockMvc.perform(delete("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(post("/projects/{projectId}/restore", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Project Chain"));
+    }
+
     private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

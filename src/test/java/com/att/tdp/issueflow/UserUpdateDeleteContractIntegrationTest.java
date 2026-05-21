@@ -278,6 +278,51 @@ class UserUpdateDeleteContractIntegrationTest {
                 .andExpect(jsonPath("$.errorCode").value("AUTH_LOGGED_OUT_TOKEN"));
     }
 
+    @Test
+    void updateThenDeleteThenVerifyGoneInUsersList() throws Exception {
+        long actorId = registerUserAndReturnId(
+                "update_delete_chain_actor",
+                "update.delete.chain.actor@example.com",
+                "Chain Actor",
+                "DEVELOPER"
+        );
+        String actorToken = loginAndGetToken("update_delete_chain_actor", "SecurePass1!");
+        long targetId = registerUserAndReturnId(
+                "update_delete_chain_target",
+                "update.delete.chain.target@example.com",
+                "Chain Target",
+                "DEVELOPER"
+        );
+
+        mockMvc.perform(post("/users/update/{userId}", targetId)
+                        .header("Authorization", "Bearer " + actorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "fullName", "Chain Target Updated",
+                                "role", "ADMIN"
+                        ))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/users/{userId}", targetId)
+                        .header("Authorization", "Bearer " + actorToken))
+                .andExpect(status().isOk());
+
+        MvcResult usersResult = mockMvc.perform(get("/users")
+                        .header("Authorization", "Bearer " + actorToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode users = objectMapper.readTree(usersResult.getResponse().getContentAsString());
+        boolean exists = false;
+        for (JsonNode user : users) {
+            if (user.get("id").asLong() == targetId) {
+                exists = true;
+                break;
+            }
+        }
+        assertTrue(!exists);
+        assertTrue(actorId > 0);
+    }
+
     private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

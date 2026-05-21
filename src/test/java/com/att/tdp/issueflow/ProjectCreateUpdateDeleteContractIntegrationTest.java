@@ -342,6 +342,52 @@ class ProjectCreateUpdateDeleteContractIntegrationTest {
                 .andExpect(jsonPath("$.errorCode").value("AUTH_INVALID_TOKEN"));
     }
 
+    @Test
+    void deepProjectLifecycleCreateUpdateDeleteRestoreAndListDeleted() throws Exception {
+        long ownerId = registerUserAndReturnId(
+                "project_deep_owner",
+                "project.deep.owner@example.com",
+                "Project Deep Owner",
+                "DEVELOPER"
+        );
+        registerUserAndReturnId(
+                "project_deep_admin",
+                "project.deep.admin@example.com",
+                "Project Deep Admin",
+                "ADMIN"
+        );
+        String ownerToken = loginAndGetToken("project_deep_owner", "SecurePass1!");
+        String adminToken = loginAndGetToken("project_deep_admin", "SecurePass1!");
+        long projectId = createProjectAndReturnId(ownerToken, ownerId, "Deep Lifecycle", "Initial deep description");
+
+        mockMvc.perform(patch("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "Deep Lifecycle Updated",
+                                "description", "Updated deep description"
+                        ))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/deleted")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").isNumber());
+
+        mockMvc.perform(post("/projects/{projectId}/restore", projectId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/projects/{projectId}", projectId)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Deep Lifecycle Updated"));
+    }
+
     private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
         MvcResult result = mockMvc.perform(post("/users")
                         .contentType(MediaType.APPLICATION_JSON)

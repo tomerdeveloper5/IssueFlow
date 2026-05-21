@@ -4,7 +4,8 @@ public record CommentResponse(
         Long id,
         Long ticketId,
         Long authorId,
-        String content
+        String content,
+        java.util.List<MentionedUserResponse> mentionedUsers
 ) {
 }
 

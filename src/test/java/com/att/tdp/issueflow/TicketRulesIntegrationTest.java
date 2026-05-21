@@ -3,6 +3,7 @@ package com.att.tdp.issueflow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -79,8 +80,8 @@ class TicketRulesIntegrationTest {
 
     @Test
     void optimisticLockConflictReturnsConflictStatus() throws Exception {
-        String token = registerAndLogin("dev3", "dev3@example.com", "SecurePass1!", "DEVELOPER");
-        Long userId = getUserId(token, "dev3");
+        String token = registerAndLogin("dev3rules", "dev3rules@example.com", "SecurePass1!", "DEVELOPER");
+        Long userId = getUserId(token, "dev3rules");
         Long projectId = createProject(token, userId);
         JsonNode ticket = createTicket(token, projectId, userId);
         Long ticketId = ticket.get("id").asLong();
@@ -96,6 +97,43 @@ class TicketRulesIntegrationTest {
                                 "title", "Concurrent update"
                         ))))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void dependencyChainBlocksDoneUntilBlockerIsDoneThenAllowsProgress() throws Exception {
+        String token = registerAndLogin("devdep", "devdep@example.com", "SecurePass1!", "DEVELOPER");
+        Long userId = getUserId(token, "devdep");
+        Long projectId = createProject(token, userId);
+        Long blockerId = createTicket(token, projectId, userId).get("id").asLong();
+        Long blockedId = createTicket(token, projectId, userId).get("id").asLong();
+
+        mockMvc.perform(post("/tickets/{ticketId}/dependencies", blockedId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("blockedBy", blockerId))))
+                .andExpect(status().isOk());
+
+        updateTicketStatus(token, blockedId, "IN_PROGRESS");
+        updateTicketStatus(token, blockedId, "IN_REVIEW");
+        mockMvc.perform(patch("/tickets/{ticketId}", blockedId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "DONE"))))
+                .andExpect(status().isBadRequest());
+
+        updateTicketStatus(token, blockerId, "IN_PROGRESS");
+        updateTicketStatus(token, blockerId, "IN_REVIEW");
+        updateTicketStatus(token, blockerId, "DONE");
+
+        mockMvc.perform(patch("/tickets/{ticketId}", blockedId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "DONE"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/tickets/{ticketId}/dependencies/{blockerId}", blockedId, blockerId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
     }
 
     private void updateTicketStatus(String token, Long ticketId, String status) throws Exception {
