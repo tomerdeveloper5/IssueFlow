@@ -22,3 +22,8 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:issueflow-local-development-secret-change-me}
+    expiration-seconds: ${JWT_EXPIRATION_SECONDS:3600}
