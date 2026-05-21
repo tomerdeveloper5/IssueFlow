@@ -8,34 +8,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.Date;
 import java.util.Map;
-import javax.crypto.SecretKey;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class UserByIdContractIntegrationTest {
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Value("${security.jwt.secret}")
-    private String jwtSecret;
+class UserByIdContractIntegrationTest extends ContractIntegrationTestSupport {
 
     @Test
     void getUserByIdWithValidTokenReturnsExpectedFieldsAndValues() throws Exception {
@@ -63,65 +50,44 @@ class UserByIdContractIntegrationTest {
         assertFalse(user.has("passwordHash"));
     }
 
-    @Test
-    void getUserByIdWithoutTokenReturnsAuthRequired() throws Exception {
-        mockMvc.perform(get("/users/{userId}", 1L))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_REQUIRED"))
+    @ParameterizedTest
+    @MethodSource("getUserByIdUnauthorizedCases")
+    void getUserByIdUnauthorizedCasesReturnExpectedErrorCodes(AuthCase authCase, String expectedErrorCode) throws Exception {
+        long targetUserId = 1L;
+        ResultActions result = switch (authCase) {
+            case NO_TOKEN -> mockMvc.perform(get("/users/{userId}", targetUserId));
+            case INVALID_TOKEN -> mockMvc.perform(get("/users/{userId}", targetUserId)
+                    .header("Authorization", "Bearer invalid.token.value"));
+            case EXPIRED_TOKEN -> {
+                registerUserAndReturnId(
+                        "user_by_id_expired",
+                        "user.by.id.expired@example.com",
+                        "Expired User",
+                        "DEVELOPER"
+                );
+                String expiredToken = createExpiredToken("user_by_id_expired");
+                yield mockMvc.perform(get("/users/{userId}", targetUserId)
+                        .header("Authorization", "Bearer " + expiredToken));
+            }
+            case LOGGED_OUT_TOKEN -> {
+                registerUserAndReturnId(
+                        "user_by_id_logout",
+                        "user.by.id.logout@example.com",
+                        "Logout User",
+                        "DEVELOPER"
+                );
+                String token = loginAndGetToken("user_by_id_logout", "SecurePass1!");
+                mockMvc.perform(post("/auth/logout")
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isOk());
+                yield mockMvc.perform(get("/users/{userId}", targetUserId)
+                        .header("Authorization", "Bearer " + token));
+            }
+        };
+
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value(expectedErrorCode))
                 .andExpect(jsonPath("$.path").value("/users/1"))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
-
-    @Test
-    void getUserByIdWithInvalidTokenReturnsAuthInvalidToken() throws Exception {
-        mockMvc.perform(get("/users/{userId}", 1L)
-                        .header("Authorization", "Bearer invalid.token.value"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_INVALID_TOKEN"))
-                .andExpect(jsonPath("$.path").value("/users/1"))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
-
-    @Test
-    void getUserByIdWithExpiredTokenReturnsAuthTokenExpired() throws Exception {
-        long userId = registerUserAndReturnId(
-                "user_by_id_expired",
-                "user.by.id.expired@example.com",
-                "Expired User",
-                "DEVELOPER"
-        );
-        String expiredToken = createExpiredToken("user_by_id_expired");
-
-        mockMvc.perform(get("/users/{userId}", userId)
-                        .header("Authorization", "Bearer " + expiredToken))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_TOKEN_EXPIRED"))
-                .andExpect(jsonPath("$.path").value("/users/" + userId))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
-
-    @Test
-    void getUserByIdWithLoggedOutTokenReturnsAuthLoggedOutToken() throws Exception {
-        long userId = registerUserAndReturnId(
-                "user_by_id_logout",
-                "user.by.id.logout@example.com",
-                "Logout User",
-                "DEVELOPER"
-        );
-        String token = loginAndGetToken("user_by_id_logout", "SecurePass1!");
-
-        mockMvc.perform(post("/auth/logout")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(get("/users/{userId}", userId)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_LOGGED_OUT_TOKEN"))
-                .andExpect(jsonPath("$.path").value("/users/" + userId))
                 .andExpect(jsonPath("$.explanation").isNotEmpty())
                 .andExpect(jsonPath("$.action").isNotEmpty());
     }
@@ -186,46 +152,22 @@ class UserByIdContractIntegrationTest {
         assertTrue(actorId > 0);
     }
 
-    private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
-        MvcResult result = mockMvc.perform(post("/users")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "email", email,
-                                "fullName", fullName,
-                                "role", role,
-                                "password", "SecurePass1!"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value(username))
-                .andReturn();
-        assertTrue(objectMapper.readTree(result.getResponse().getContentAsString()).size() == 5);
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+    private static Stream<Arguments> getUserByIdUnauthorizedCases() {
+        return Stream.of(
+                Arguments.of(AuthCase.NO_TOKEN, "AUTH_REQUIRED"),
+                Arguments.of(AuthCase.INVALID_TOKEN, "AUTH_INVALID_TOKEN"),
+                Arguments.of(AuthCase.EXPIRED_TOKEN, "AUTH_TOKEN_EXPIRED"),
+                Arguments.of(AuthCase.LOGGED_OUT_TOKEN, "AUTH_LOGGED_OUT_TOKEN")
+        );
     }
 
-    private String loginAndGetToken(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "password", password
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
+    private enum AuthCase {
+        NO_TOKEN,
+        INVALID_TOKEN,
+        EXPIRED_TOKEN,
+        LOGGED_OUT_TOKEN
     }
 
-    private String createExpiredToken(String username) {
-        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-        Instant now = Instant.now();
-        return Jwts.builder()
-                .subject(username)
-                .issuedAt(Date.from(now.minusSeconds(3600)))
-                .expiration(Date.from(now.minusSeconds(60)))
-                .signWith(key)
-                .compact();
-    }
 }
 
 

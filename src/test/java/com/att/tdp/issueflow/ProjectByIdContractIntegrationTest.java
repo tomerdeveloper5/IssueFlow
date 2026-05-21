@@ -9,34 +9,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.Date;
 import java.util.Map;
-import javax.crypto.SecretKey;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class ProjectByIdContractIntegrationTest {
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Value("${security.jwt.secret}")
-    private String jwtSecret;
+class ProjectByIdContractIntegrationTest extends ContractIntegrationTestSupport {
 
     @Test
     void getProjectByIdWithValidTokenReturnsExpectedFieldsAndValues() throws Exception {
@@ -62,64 +49,43 @@ class ProjectByIdContractIntegrationTest {
         assertTrue(project.get("ownerId").asLong() == ownerId);
     }
 
-    @Test
-    void getProjectByIdWithoutTokenReturnsAuthRequired() throws Exception {
-        mockMvc.perform(get("/projects/{projectId}", 1L))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_REQUIRED"))
-                .andExpect(jsonPath("$.path").value("/projects/1"))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
+    @ParameterizedTest
+    @MethodSource("getProjectByIdUnauthorizedCases")
+    void getProjectByIdUnauthorizedCasesReturnExpectedErrorCodes(AuthCase authCase, String expectedErrorCode) throws Exception {
+        long targetProjectId = 1L;
+        ResultActions result = switch (authCase) {
+            case NO_TOKEN -> mockMvc.perform(get("/projects/{projectId}", targetProjectId));
+            case INVALID_TOKEN -> mockMvc.perform(get("/projects/{projectId}", targetProjectId)
+                    .header("Authorization", "Bearer invalid.token.value"));
+            case EXPIRED_TOKEN -> {
+                registerUserAndReturnId(
+                        "project_by_id_expired_user",
+                        "project.by.id.expired.user@example.com",
+                        "Project ById Expired",
+                        "DEVELOPER"
+                );
+                String expiredToken = createExpiredToken("project_by_id_expired_user");
+                yield mockMvc.perform(get("/projects/{projectId}", targetProjectId)
+                        .header("Authorization", "Bearer " + expiredToken));
+            }
+            case LOGGED_OUT_TOKEN -> {
+                registerUserAndReturnId(
+                        "project_by_id_logout_user",
+                        "project.by.id.logout.user@example.com",
+                        "Project ById Logout",
+                        "DEVELOPER"
+                );
+                String token = loginAndGetToken("project_by_id_logout_user", "SecurePass1!");
+                mockMvc.perform(post("/auth/logout")
+                                .header("Authorization", "Bearer " + token))
+                        .andExpect(status().isOk());
+                yield mockMvc.perform(get("/projects/{projectId}", targetProjectId)
+                        .header("Authorization", "Bearer " + token));
+            }
+        };
 
-    @Test
-    void getProjectByIdWithInvalidTokenReturnsAuthInvalidToken() throws Exception {
-        mockMvc.perform(get("/projects/{projectId}", 1L)
-                        .header("Authorization", "Bearer invalid.token.value"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_INVALID_TOKEN"))
-                .andExpect(jsonPath("$.path").value("/projects/1"))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
-
-    @Test
-    void getProjectByIdWithExpiredTokenReturnsAuthTokenExpired() throws Exception {
-        registerUserAndReturnId(
-                "project_by_id_expired_user",
-                "project.by.id.expired.user@example.com",
-                "Project ById Expired",
-                "DEVELOPER"
-        );
-        String expiredToken = createExpiredToken("project_by_id_expired_user");
-
-        mockMvc.perform(get("/projects/{projectId}", 1L)
-                        .header("Authorization", "Bearer " + expiredToken))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_TOKEN_EXPIRED"))
-                .andExpect(jsonPath("$.path").value("/projects/1"))
-                .andExpect(jsonPath("$.explanation").isNotEmpty())
-                .andExpect(jsonPath("$.action").isNotEmpty());
-    }
-
-    @Test
-    void getProjectByIdWithLoggedOutTokenReturnsAuthLoggedOutToken() throws Exception {
-        registerUserAndReturnId(
-                "project_by_id_logout_user",
-                "project.by.id.logout.user@example.com",
-                "Project ById Logout",
-                "DEVELOPER"
-        );
-        String token = loginAndGetToken("project_by_id_logout_user", "SecurePass1!");
-
-        mockMvc.perform(post("/auth/logout")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(get("/projects/{projectId}", 1L)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("AUTH_LOGGED_OUT_TOKEN"))
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value(expectedErrorCode))
                 .andExpect(jsonPath("$.path").value("/projects/1"))
                 .andExpect(jsonPath("$.explanation").isNotEmpty())
                 .andExpect(jsonPath("$.action").isNotEmpty());
@@ -195,79 +161,22 @@ class ProjectByIdContractIntegrationTest {
                 .andExpect(jsonPath("$[0].openTicketCount").isNumber());
     }
 
-    private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
-        MvcResult result = mockMvc.perform(post("/users")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "email", email,
-                                "fullName", fullName,
-                                "role", role,
-                                "password", "SecurePass1!"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value(username))
-                .andReturn();
-        assertTrue(objectMapper.readTree(result.getResponse().getContentAsString()).size() == 5);
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+    private static Stream<Arguments> getProjectByIdUnauthorizedCases() {
+        return Stream.of(
+                Arguments.of(AuthCase.NO_TOKEN, "AUTH_REQUIRED"),
+                Arguments.of(AuthCase.INVALID_TOKEN, "AUTH_INVALID_TOKEN"),
+                Arguments.of(AuthCase.EXPIRED_TOKEN, "AUTH_TOKEN_EXPIRED"),
+                Arguments.of(AuthCase.LOGGED_OUT_TOKEN, "AUTH_LOGGED_OUT_TOKEN")
+        );
     }
 
-    private String loginAndGetToken(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "password", password
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
+    private enum AuthCase {
+        NO_TOKEN,
+        INVALID_TOKEN,
+        EXPIRED_TOKEN,
+        LOGGED_OUT_TOKEN
     }
 
-    private String createExpiredToken(String username) {
-        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-        Instant now = Instant.now();
-        return Jwts.builder()
-                .subject(username)
-                .issuedAt(Date.from(now.minusSeconds(3600)))
-                .expiration(Date.from(now.minusSeconds(60)))
-                .signWith(key)
-                .compact();
-    }
-
-    private long createProjectAndReturnId(String token, long ownerId, String name, String description) throws Exception {
-        MvcResult result = mockMvc.perform(post("/projects")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "name", name,
-                                "description", description,
-                                "ownerId", ownerId
-                        ))))
-                .andExpect(status().isOk())
-                .andReturn();
-        assertTrue(objectMapper.readTree(result.getResponse().getContentAsString()).size() == 4);
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
-    }
-
-    private long createTicketAndReturnId(String token, long projectId, long assigneeId, String title) throws Exception {
-        MvcResult result = mockMvc.perform(post("/tickets")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "title", title,
-                                "description", "ticket for project chain",
-                                "status", "TODO",
-                                "priority", "HIGH",
-                                "type", "BUG",
-                                "projectId", projectId,
-                                "assigneeId", assigneeId
-                        ))))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
-    }
 }
 
 

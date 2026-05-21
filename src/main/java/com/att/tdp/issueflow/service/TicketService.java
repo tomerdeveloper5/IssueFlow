@@ -157,7 +157,7 @@ public class TicketService {
             Long count = (Long) row[1];
             openCounts.put(userId, count);
         }
-        return userService.getDevelopersOrderedByRegistration().stream()
+        return userService.getLinkedUsersByProject(projectId).stream()
                 .map(user -> new WorkloadResponse(user.getId(), user.getUsername(), openCounts.getOrDefault(user.getId(), 0L)))
                 .sorted((a, b) -> Long.compare(a.openTicketCount(), b.openTicketCount()))
                 .toList();
@@ -167,11 +167,10 @@ public class TicketService {
     public String exportCsv(Long projectId) {
         projectService.getActiveEntity(projectId);
         List<Ticket> tickets = ticketRepository.findByProjectIdAndDeletedFalse(projectId);
-        try {
-            StringWriter writer = new StringWriter();
-            CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder()
-                    .setHeader("id", "title", "description", "status", "priority", "type", "assigneeId")
-                    .build());
+        try (StringWriter writer = new StringWriter();
+             CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder()
+                     .setHeader("id", "title", "description", "status", "priority", "type", "assigneeId")
+                     .build())) {
             for (Ticket ticket : tickets) {
                 printer.printRecord(
                         ticket.getId(),
@@ -257,7 +256,7 @@ public class TicketService {
         if (explicitAssigneeId != null) {
             return userService.getEntity(explicitAssigneeId);
         }
-        List<User> developers = userService.getDevelopersOrderedByRegistration();
+        List<User> developers = userService.getLinkedDevelopersOrderedByRegistration(projectId);
         if (developers.isEmpty()) {
             return null;
         }

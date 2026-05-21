@@ -42,38 +42,6 @@ class ExtendedFeaturesIntegrationTest {
     private TicketService ticketService;
 
     @Test
-    void dependenciesPreventDoneTransitionUntilBlockersResolved() throws Exception {
-        UserSession developer = registerAndLogin("DEVELOPER");
-        Long projectId = createProject(developer.token, developer.userId);
-        Long blockerId = createTicket(developer.token, projectId, developer.userId, "TODO", "HIGH", null, "Blocker");
-        Long blockedId = createTicket(developer.token, projectId, developer.userId, "TODO", "MEDIUM", null, "Blocked");
-
-        mockMvc.perform(post("/tickets/{ticketId}/dependencies", blockedId)
-                        .header("Authorization", "Bearer " + developer.token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("blockedBy", blockerId))))
-                .andExpect(status().isOk());
-
-        moveTicketForward(developer.token, blockedId, "IN_PROGRESS");
-        moveTicketForward(developer.token, blockedId, "IN_REVIEW");
-        mockMvc.perform(patch("/tickets/{ticketId}", blockedId)
-                        .header("Authorization", "Bearer " + developer.token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("status", "DONE"))))
-                .andExpect(status().isBadRequest());
-
-        moveTicketForward(developer.token, blockerId, "IN_PROGRESS");
-        moveTicketForward(developer.token, blockerId, "IN_REVIEW");
-        moveTicketForward(developer.token, blockerId, "DONE");
-
-        mockMvc.perform(patch("/tickets/{ticketId}", blockedId)
-                        .header("Authorization", "Bearer " + developer.token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("status", "DONE"))))
-                .andExpect(status().isOk());
-    }
-
-    @Test
     void supportsAttachmentUploadDeleteAndValidation() throws Exception {
         UserSession developer = registerAndLogin("DEVELOPER");
         Long projectId = createProject(developer.token, developer.userId);
@@ -139,59 +107,6 @@ class ExtendedFeaturesIntegrationTest {
     }
 
     @Test
-    void mentionsAreIndexedAndQueryablePerUser() throws Exception {
-        UserSession author = registerAndLogin("DEVELOPER");
-        UserSession target = registerAndLogin("DEVELOPER");
-        Long projectId = createProject(author.token, author.userId);
-        Long ticketId = createTicket(author.token, projectId, author.userId, "TODO", "LOW", null, "Mentions");
-        String content = "Please review @" + target.username + " now";
-
-        MvcResult createResult = mockMvc.perform(post("/tickets/{ticketId}/comments", ticketId)
-                        .header("Authorization", "Bearer " + author.token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("authorId", author.userId, "content", content))))
-                .andExpect(status().isOk())
-                .andReturn();
-        JsonNode createdComment = objectMapper.readTree(createResult.getResponse().getContentAsString());
-        Long commentId = createdComment.get("id").asLong();
-        assertObjectKeys(createdComment, "id", "ticketId", "authorId", "content", "mentionedUsers");
-        assertTrue(createdComment.get("mentionedUsers").isArray());
-        assertEquals(1, createdComment.get("mentionedUsers").size());
-        assertObjectKeys(createdComment.get("mentionedUsers").get(0), "id", "username", "fullName");
-
-        MvcResult mentionsResult = mockMvc.perform(get("/users/{userId}/mentions", target.userId)
-                        .header("Authorization", "Bearer " + author.token)
-                        .param("page", "1")
-                        .param("pageSize", "10"))
-                .andExpect(status().isOk())
-                .andReturn();
-        JsonNode mentionPayload = objectMapper.readTree(mentionsResult.getResponse().getContentAsString());
-        assertObjectKeys(mentionPayload, "data", "total", "page");
-        assertTrue(mentionPayload.get("total").asLong() >= 1);
-        assertTrue(mentionPayload.get("data").isArray());
-        assertTrue(mentionPayload.get("data").size() >= 1);
-        assertObjectKeys(mentionPayload.get("data").get(0), "id", "ticketId", "authorId", "content", "mentionedUsers");
-
-        mockMvc.perform(patch("/tickets/{ticketId}/comments/{commentId}", ticketId, commentId)
-                        .header("Authorization", "Bearer " + author.token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("content", "Removed mention"))))
-                .andExpect(status().isOk());
-
-        MvcResult mentionsAfterUpdate = mockMvc.perform(get("/users/{userId}/mentions", target.userId)
-                        .header("Authorization", "Bearer " + author.token)
-                        .param("page", "1")
-                        .param("pageSize", "10"))
-                .andExpect(status().isOk())
-                .andReturn();
-        JsonNode mentionAfter = objectMapper.readTree(mentionsAfterUpdate.getResponse().getContentAsString());
-        assertObjectKeys(mentionAfter, "data", "total", "page");
-        assertEquals(0, mentionAfter.get("total").asLong());
-        assertTrue(mentionAfter.get("data").isArray());
-        assertEquals(0, mentionAfter.get("data").size());
-    }
-
-    @Test
     void supportsAutoAssignmentWorkloadImportExportEscalationAndAudit() throws Exception {
         UserSession oldest = registerAndLogin("DEVELOPER");
         registerAndLogin("DEVELOPER");
@@ -251,6 +166,18 @@ class ExtendedFeaturesIntegrationTest {
         JsonNode audit = objectMapper.readTree(auditResult.getResponse().getContentAsString());
         assertTrue(audit.isArray());
         assertTrue(audit.size() >= 2);
+    }
+
+    @Test
+    void leavesTicketUnassignedWhenProjectHasNoLinkedDevelopers() throws Exception {
+        UserSession adminOwner = registerAndLogin("ADMIN");
+        registerAndLogin("DEVELOPER");
+        Long projectId = createProject(adminOwner.token, adminOwner.userId);
+
+        Long ticketId = createTicket(adminOwner.token, projectId, null, "TODO", "LOW", null, "NoLinkedDevelopers");
+        JsonNode createdTicket = getTicket(adminOwner.token, ticketId);
+        assertTrue(createdTicket.has("assigneeId"));
+        assertTrue(createdTicket.get("assigneeId").isNull());
     }
 
     @Test

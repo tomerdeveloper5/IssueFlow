@@ -8,34 +8,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.Date;
 import java.util.Map;
-import javax.crypto.SecretKey;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class UserUpdateDeleteContractIntegrationTest {
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Value("${security.jwt.secret}")
-    private String jwtSecret;
+class UserUpdateDeleteContractIntegrationTest extends ContractIntegrationTestSupport {
 
     @Test
     void updateUserWithValidTokenUpdatesFieldsAndKeepsIdentityFields() throws Exception {
@@ -323,45 +305,6 @@ class UserUpdateDeleteContractIntegrationTest {
         assertTrue(actorId > 0);
     }
 
-    private long registerUserAndReturnId(String username, String email, String fullName, String role) throws Exception {
-        MvcResult result = mockMvc.perform(post("/users")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "email", email,
-                                "fullName", fullName,
-                                "role", role,
-                                "password", "SecurePass1!"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value(username))
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
-    }
-
-    private String loginAndGetToken(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", username,
-                                "password", password
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString()).get("accessToken").asText();
-    }
-
-    private String createExpiredToken(String username) {
-        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-        Instant now = Instant.now();
-        return Jwts.builder()
-                .subject(username)
-                .issuedAt(Date.from(now.minusSeconds(3600)))
-                .expiration(Date.from(now.minusSeconds(60)))
-                .signWith(key)
-                .compact();
-    }
 }
 
 

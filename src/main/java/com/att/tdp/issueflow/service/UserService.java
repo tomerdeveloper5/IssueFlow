@@ -7,6 +7,7 @@ import com.att.tdp.issueflow.domain.User;
 import com.att.tdp.issueflow.domain.UserRole;
 import com.att.tdp.issueflow.exception.NotFoundException;
 import com.att.tdp.issueflow.repository.UserRepository;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -74,6 +75,20 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<User> getDevelopersOrderedByRegistration() {
         return userRepository.findByRoleOrderByCreatedAtAsc(UserRole.DEVELOPER);
+    }
+
+    @Transactional(readOnly = true)
+    public List<User> getLinkedUsersByProject(Long projectId) {
+        return userRepository.findLinkedUsersByProjectId(projectId).stream()
+                .sorted(Comparator.comparing(User::getCreatedAt))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<User> getLinkedDevelopersOrderedByRegistration(Long projectId) {
+        return getLinkedUsersByProject(projectId).stream()
+                .filter(user -> user.getRole() == UserRole.DEVELOPER)
+                .toList();
     }
 
     private UserResponse toResponse(User user) {
